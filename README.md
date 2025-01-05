@@ -45,22 +45,21 @@ Prerequisites
 	•	Git: Clone the project repository.
 
 Installation and Setup
-	1.	Clone the repository:
 
-git clone https://github.com/your-repo/ft_transcendence.git
+1.Clone the repository:
+
+	git clone https://github.com/your-repo/ft_transcendence.git
+
+2.Navigate to the project directory:
+
+	cd ft_transcendence
+
+3.Build and launch the containers:
+
+	docker-compose up --build
 
 
-	2.	Navigate to the project directory:
-
-cd ft_transcendence
-
-
-	3.	Build and launch the containers:
-
-docker-compose up --build
-
-
-	4.	Open your browser and go to http://127.0.0.1 to access the application.
+4.Open your browser and go to http://127.0.0.1 to access the application.
 
 Project Structure
 	•	Frontend: Developed with vanilla JavaScript for a dynamic and responsive user experience.
