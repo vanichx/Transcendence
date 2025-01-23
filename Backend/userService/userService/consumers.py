@@ -1,7 +1,11 @@
 import json
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from .models import Profile  # Import Profile model
+from .models import Profile, ChatModel
+from django.contrib.auth.models import User
+
+logger = logging.getLogger(__name__)
 
 class NotificationConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -84,3 +88,89 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'from_user_id': event['from_user_id'],
             'from_user_name': event['from_user_name'],
         }))
+
+class ChatConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        my_id = self.scope['user'].id
+        query_string = self.scope['query_string'].decode()
+        query_params = dict(qc.split('=') for qc in query_string.split('&'))
+        other_user_id = query_params.get('friend_id')
+        self.other_user_id = other_user_id
+        
+        if other_user_id is None:
+            logger.error("other_user_id is None")
+            await self.close()
+            return
+
+        if int(my_id) < int(other_user_id):
+            self.room_name = f'{my_id}-{other_user_id}'
+        else:
+            self.room_name = f'{other_user_id}-{my_id}'
+        self.room_group_name = f'chat_{self.room_name}'
+
+        logger.info(f'Connecting to room {self.room_group_name}')
+
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, code):
+        if hasattr(self, 'room_group_name'):
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name
+            )
+        else:
+            logger.warning("room_group_name not set, skipping group discard.")
+
+    async def receive(self, text_data=None, bytes_data=None):
+        data = json.loads(text_data)
+        message = data['message']
+        username = data['username']
+        receiver = data['receiver']
+        receiver_id = int(self.other_user_id)
+        sender_id = int(self.scope['user'].id)  # Get sender's ID
+        print(message)
+        if sender_id < receiver_id:
+            thread_name = f'chat_{sender_id}-{receiver_id}'
+        else:
+            thread_name = f'chat_{receiver_id}-{sender_id}'
+    
+        # Save the message to the database
+        await self.save_message(username, thread_name, message, receiver)
+
+        # Send the message to all clients in the room
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'chat_message',
+                'message': message,
+                'username': username,
+                'sender_id': sender_id,  # Include sender's ID
+            }
+        )
+
+    async def chat_message(self, event):
+        # Only send if current user is not the sender
+        if self.scope['user'].id != event['sender_id']:
+            await self.send(text_data=json.dumps({
+                'message': event['message'],
+                'username': event['username']
+            }))
+
+    @database_sync_to_async
+    def save_message(self, username, thread_name, message, receiver):
+        # Save message to the database
+        chat_obj = ChatModel.objects.create(
+            sender=username, message=message, thread_name=thread_name)
+        
+        # Ensure other_user_id is available
+        other_user_id = self.scope['query_string'].decode().split('=')[1]
+        get_user = User.objects.get(id=other_user_id)
+        
+        # # Handle notification creation if the receiver is the user we're sending to
+        # if receiver == get_user.username:
+        #     ChatNotification.objects.create(chat=chat_obj, user=get_user)

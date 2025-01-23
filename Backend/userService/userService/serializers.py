@@ -6,13 +6,13 @@
 #    By: ipetruni <ipetruni@student.42.fr>          +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2024/11/19 12:09:54 by ipetruni          #+#    #+#              #
-#    Updated: 2024/12/05 18:05:00 by ipetruni         ###   ########.fr        #
+#    Updated: 2025/01/22 17:32:01 by ipetruni         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Profile, Friendship
+from .models import Profile, Friendship, ChatModel
 from django.db.models import Q
 import random
 
@@ -46,22 +46,20 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     avatar = serializers.SerializerMethodField()
-    is_friend = serializers.SerializerMethodField()
     friend_request_status = serializers.SerializerMethodField()
     requested_by_current_user = serializers.SerializerMethodField()
 
 
     class Meta:
         model = Profile
-        fields = ['id', 'display_name', 'avatar', 'is_friend',
-                 'friend_request_status', 'requested_by_current_user',
-                 'is_online']
+        fields = ['id', 'display_name', 'avatar', 'is_online',
+                 'friend_request_status', 'requested_by_current_user']
 
     def get_avatar(self, obj):
         request = self.context.get('request')
-        if obj.avatar and obj.avatar.url:
-            return f"{request.scheme}://{request.get_host()}:{request.get_port()}{obj.avatar.url}"
-        return f"{request.scheme}://{request.get_host()}:{request.get_port()}/media/default.png"
+        if obj.avatar:
+            return request.build_absolute_uri(obj.avatar.url)
+        return request.build_absolute_uri(f'/media/{Profile.DEFAULT_AVATAR_PATH}')
 
     def get_is_friend(self, obj):
         user = self.context['request'].user
@@ -81,3 +79,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_requested_by_current_user(self, obj):
         user = self.context['request'].user
         return Friendship.objects.filter(from_profile=user.profile, to_profile=obj, status='pending').exists()
+
+class ChatModelSerializer(serializers.ModelSerializer):
+    sender_name = serializers.CharField(source='sender.username', read_only=True)
+    receiver_name = serializers.CharField(source='receiver.username', read_only=True)
+
+    class Meta:
+        model = ChatModel
+        fields = ['id', 'sender', 'receiver', 'sender_name', 'receiver_name', 'message', 'thread_name', 'timestamp']

@@ -6,7 +6,7 @@
 #    By: ipetruni <ipetruni@student.42.fr>          +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2024/11/19 12:10:18 by ipetruni          #+#    #+#              #
-#    Updated: 2024/12/19 15:23:06 by ipetruni         ###   ########.fr        #
+#    Updated: 2025/01/22 18:39:26 by ipetruni         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -14,26 +14,40 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from rest_framework import status, viewsets, filters
 from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view
 from rest_framework import generics
 from .serializers import UserSerializer, UserProfileSerializer
-from .models import Profile, Friendship
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
+from .models import Profile, Friendship, ChatModel
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import permission_classes
 from django.db.models import Q
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-
+from django.contrib.messages.api import *  # NOQA
+from django.contrib.messages.constants import *  # NOQA
+from django.contrib.messages.storage.base import Message  # NOQA
+from django.views.generic import DetailView 
+import json
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
+from django.shortcuts import render
+from django.contrib.auth import get_user_model
 import logging
+from django.views import View
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
+from django.views import View
+from django.contrib.auth.models import User
+from .models import ChatModel
+import json
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
 
 logger = logging.getLogger(__name__)
 
-
-@method_decorator(csrf_exempt, name='dispatch')
 class RegisterView(generics.CreateAPIView):
     serializer_class = UserSerializer
 
@@ -52,11 +66,12 @@ class RegisterView(generics.CreateAPIView):
         return Response({"error": "Registration failed", "details": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
-@method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     def post(self, request, *args, **kwargs):
+        print("Raw request data:", request.body)
         username = request.data.get("username")
         password = request.data.get("password")
+        print(f"Username: {username}, Password length: {len(password) if password else 0}")
 
         if not username or not password:
             return Response(
@@ -64,35 +79,85 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        try:
-            user = User.objects.get(username=username)
-        except User.DoesNotExist:
-            return Response(
-                {"message": "User does not exist."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
         user = authenticate(request, username=username, password=password)
+        print('Request received:', request.data)
+        
         if user:
-            login(request, user)
-            return Response({"message": "Login successful"}, status=status.HTTP_200_OK)
+            # Get or create token using correct import
+            token, created = Token.objects.get_or_create(user=user)
+            
+            user_data = {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+            }
+            
+            return Response({
+                'token': token.key,
+                'user': user_data
+            }, status=status.HTTP_200_OK)
         
         return Response(
             {"message": "Invalid username or password."},
             status=status.HTTP_401_UNAUTHORIZED
         )
 
-@method_decorator(csrf_exempt, name='dispatch')
 class ProfileView(APIView):
-    parser_classes = [MultiPartParser, FormParser]
+    authentication_classes = [TokenAuthentication]  # First: Validates authToken
+    permission_classes = [IsAuthenticated]         # Then: Checks if identified user has access
 
     def get(self, request):
-        user_profile = Profile.objects.get(user=request.user)
-        friends = user_profile.get_friends()
-        friends_data = UserProfileSerializer(friends, many=True, context={"request": request}).data
-        profile_data = UserProfileSerializer(user_profile, context={"request": request}).data
-        profile_data['friends'] = friends_data
-        return Response(profile_data)
+        try:
+            logger.debug(f"Fetching profile for user: {request.user.username}")
+            
+            # Use get_object_or_404 instead of direct get()
+            user_profile = get_object_or_404(Profile, user=request.user)
+            
+            # Fetch friends
+            friends = user_profile.get_friends()
+            
+            # Serialize data
+            serializer_context = {"request": request}
+            friends_data = UserProfileSerializer(friends, many=True, context=serializer_context).data
+            profile_data = UserProfileSerializer(user_profile, context=serializer_context).data
+            profile_data['friends'] = friends_data
+            
+            logger.debug(f"Successfully retrieved profile for user: {request.user.username}")
+            return Response(profile_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error fetching profile: {str(e)}")
+            return Response(
+                {"error": "Failed to retrieve profile"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def delete(self, request):
+        """Handle avatar deletion"""
+        try:
+            user_profile = request.user.profile
+            
+            if not user_profile.avatar:
+                return Response(
+                    {"message": "Already using default avatar"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            user_profile.avatar.delete(save=False)
+            user_profile.avatar = None
+            user_profile.save()
+            
+            logger.info(f"Reset avatar to default for user {request.user.username}")
+            
+            serializer = UserProfileSerializer(user_profile, context={"request": request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Avatar deletion error: {str(e)}")
+            return Response(
+                {"message": "Failed to delete avatar"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def put(self, request, *args, **kwargs):
         if not request.user.is_authenticated:
@@ -102,46 +167,61 @@ class ProfileView(APIView):
         data = request.data
 
         if 'display_name' in data:
-            display_name = data['display_name']
+            display_name = data['display_name'].strip()
 
             if Profile.objects.filter(display_name=display_name).exclude(user=request.user).exists():
                 return Response({"message": "Display name is already taken"}, status=status.HTTP_400_BAD_REQUEST)
             user_profile.display_name = display_name
+            logger.info(f"Updated display name for user {request.user.username}")
             
-        if 'avatar' in data:
-            user_profile.avatar = data['avatar']
+        if 'avatar' in request.FILES:
+                avatar = request.FILES['avatar']
+                
+                # Validate file type
+                if not avatar.content_type.startswith('image/'):
+                    return Response(
+                        {"message": "Invalid file type. Please upload an image"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Validate file size (5MB limit)
+                if avatar.size > 5 * 1024 * 1024:
+                    return Response(
+                        {"message": "File too large. Maximum size is 5MB"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # Delete old avatar if exists
+                if user_profile.avatar:
+                    user_profile.avatar.delete(save=False)
+                
+                user_profile.avatar = avatar
+                logger.info(f"Updated avatar for user {request.user.username}")
 
         user_profile.save()
-        return Response({"message": "Profile updated successfully"}, status=status.HTTP_200_OK)
-
-@api_view(['DELETE'])
-def delete_avatar(request):
-    if not request.user.is_authenticated:
-        return Response({"message": "You are not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
-
-    user_profile = request.user.profile
-    user_profile.avatar.delete(save=False)  # Delete the current avatar file
-    user_profile.avatar = None  # Set the avatar field to None
-    user_profile.save()
-    return Response({"message": "Avatar deleted successfully", "avatar": None}, status=status.HTTP_200_OK)
-
-@api_view(['GET'])
-def check_display_name(request):
-    display_name = request.query_params.get('display_name', None)
-    if display_name is None:
-        return Response({"message": "Display name is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-    if Profile.objects.filter(display_name=display_name).exclude(user=request.user).exists():
-        return Response({"message": "Display name is already taken"}, status=status.HTTP_400_BAD_REQUEST)
-
-    return Response({"message": "Display name is available"}, status=status.HTTP_200_OK)
+        
+        # Return updated profile data
+        serializer = UserProfileSerializer(user_profile, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class SearchProfilesView(generics.ListAPIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
 
     def get_queryset(self):
-        search_query = self.request.query_params.get('q', '')
-        return Profile.objects.filter(display_name__icontains=search_query)
+        search_query = self.request.query_params.get('q', '').strip()
+        if not search_query:
+            return Profile.objects.none()
+            
+        current_user_profile = self.request.user.profile
+        queryset = Profile.objects.filter(
+            display_name__icontains=search_query
+        ).exclude(
+            user=self.request.user
+        )
+            
+        return queryset
 
 @permission_classes([IsAuthenticated])
 class AddFriendView(APIView):
@@ -304,7 +384,6 @@ class RemoveFriendView(APIView):
         except Profile.DoesNotExist:
             return Response({"message": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
 
-@method_decorator(csrf_exempt, name='dispatch')
 class LogoutView(APIView):
     def post(self, request, *args, **kwargs):
         if request.user.is_authenticated:
@@ -328,4 +407,34 @@ class LogoutView(APIView):
 
             logout(request)
             return Response({"message": "Logout successful"}, status=status.HTTP_200_OK)
-        return Response({"message": "Logout not successful"}, status=status.HTTP_200_OK)
+            return Response({"message": "Logout not successful"}, status=status.HTTP_200_OK)
+
+class ChatView(View):
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        receiver = get_object_or_404(User, id=self.kwargs['id'])
+        
+        # Формируем thread_name
+        if user.id < receiver.id:
+            thread_name = f'chat_{user.id}-{receiver.id}'
+        else:
+            thread_name = f'chat_{receiver.id}-{user.id}'
+        
+        # Получаем сообщения из модели
+        messages = ChatModel.objects.filter(thread_name=thread_name)
+        
+        # Исключаем текущего пользователя из списка пользователей
+        users = User.objects.exclude(id=user.id)
+        
+        # Формируем данные для ответа
+        data = {
+            'users': list(users.values('id', 'username')),
+            'user': user.username,
+            'messages': list(messages.values('sender', 'message', 'timestamp')),
+            'thread_name': thread_name,
+            'user_json': json.dumps(user.id),
+            'receiver_json': json.dumps(receiver.id),
+            'username_json': json.dumps(user.username),
+            'receiver_username_json': json.dumps(receiver.username)
+        }
+        return JsonResponse(data)

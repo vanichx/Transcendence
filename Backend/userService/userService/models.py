@@ -1,15 +1,3 @@
-# **************************************************************************** #
-#                                                                              #
-#                                                         :::      ::::::::    #
-#    models.py                                          :+:      :+:    :+:    #
-#                                                     +:+ +:+         +:+      #
-#    By: ipetruni <ipetruni@student.42.fr>          +#+  +:+       +#+         #
-#                                                 +#+#+#+#+#+   +#+            #
-#    Created: 2024/11/19 12:09:43 by ipetruni          #+#    #+#              #
-#    Updated: 2024/12/05 15:33:47 by ipetruni         ###   ########.fr        #
-#                                                                              #
-# **************************************************************************** #
-
 from django.db import models
 from django.db.models import Q
 from django.contrib.auth.models import User
@@ -19,6 +7,13 @@ class Profile(models.Model):
     display_name = models.CharField(max_length=100)
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
     is_online = models.BooleanField(default=False)
+
+    DEFAULT_AVATAR_PATH = 'default.png'
+
+    def get_avatar_url(self):
+        if self.avatar:
+            return self.avatar.url
+        return f"/media/{self.DEFAULT_AVATAR_PATH}"
 
     def get_friends(self):
         friendships = Friendship.objects.filter(
@@ -40,3 +35,34 @@ class Friendship(models.Model):
 
     class Meta:
         unique_together = ('from_profile', 'to_profile')
+
+class ChatModel(models.Model):
+    sender = models.CharField(max_length=100, default=None)
+    message = models.TextField(null=True, blank=True)
+    thread_name = models.CharField(null=True, blank=True, max_length=50)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.sender}: {self.message[:50]}"
+    
+# class Chat(models.Model):
+#     id = models.CharField(primary_key=True, max_length=255, editable=False)
+#     participant1 = models.ForeignKey(User, related_name='chats1', on_delete=models.CASCADE)
+#     participant2 = models.ForeignKey(User, related_name='chats2', on_delete=models.CASCADE)
+#     def save(self, *args, **kwargs):
+#         self.id = '_'.join(sorted([str(self.participant1_id), str(self.participant2_id)]))
+#         super().save(*args, **kwargs)
+
+# class Message(models.Model):
+#     chat = models.ForeignKey(Chat, related_name='messages', on_delete=models.CASCADE)
+#     sender = models.ForeignKey(User, related_name='messages', on_delete=models.CASCADE)
+#     text = models.TextField()
+#     created_at = models.DateTimeField(auto_now_add=True)
+    
+# class ChatNotification(models.Model):
+#     chat = models.ForeignKey(to=ChatModel, on_delete=models.CASCADE)
+#     user = models.ForeignKey(to=User, on_delete=models.CASCADE)
+#     is_seen = models.BooleanField(default=False)
+
+#     def __str__(self):
+#         return self.user.username
