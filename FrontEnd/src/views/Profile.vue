@@ -1,18 +1,28 @@
 <template>
+  <div v-if="statusMessage" class="status-message" :class="statusMessage.type">
+    {{ statusMessage.text }}
+  </div>
   <div class="profile-container">
     <!-- Profile Card -->
     <div class="profile-card" v-if="profile">
       <!-- Avatar Section with Upload/Delete -->
       <div class="avatar-container">
         <img 
-          :src="profile.avatar" 
-          :alt="profile.display_name"
-          class="profile-picture"
+            :src="profile.avatar || defaultAvatarUrl" 
+            :alt="profile.display_name"
+            class="profile-picture"
+            @error="handleAvatarError"
         />
         <div class="avatar-actions">
           <input type="file" @change="onFileChange" class="file-input" id="avatar-upload" />
           <label for="avatar-upload" class="btn primary-btn">Change Avatar</label>
-          <button v-if="!isDefaultAvatar" @click="deleteAvatar" class="btn secondary-btn">Delete Avatar</button>
+          <button 
+            v-if="!isDefaultAvatar" 
+            @click="deleteAvatar" 
+            class="btn secondary-btn"
+          >
+            Delete Avatar
+          </button>
         </div>
       </div>
 
@@ -37,7 +47,7 @@
         </form>
       </div>
 
-      <!-- Search Profiles Section -->
+      <!-- Search Section -->
       <div class="search-section">
         <input 
           v-model="searchQuery" 
@@ -52,69 +62,74 @@
         </div>
         <div v-else-if="searchResults?.length" class="search-results">
           <div v-for="profile in searchResults" :key="profile.id" class="profile-item">
-            <img :src="profile.avatar" :alt="profile.display_name" class="profile-avatar">
-            <p>{{ profile.display_name }}</p>
+            <!-- Use get_avatar_url from Profile model -->
+            <img :src="profile.avatar || profile.get_avatar_url":alt="profile.display_name" class="profile-avatar">
+            <div class="profile-info">
+              <p class="display-name">{{ profile.display_name }}</p>
+            </div>
+            
             <div class="friend-actions">
-              <div v-if="profile.friend_request_status === 'pending'">
-                <div v-if="profile.requested_by_current_user">
-                  <p class="status-text">Request Pending</p>
-                </div>
-                <div v-else>
-                  <button @click="acceptFriendRequest(profile.id)" class="btn primary-btn">Accept</button>
-                  <button @click="declineFriendRequest(profile.id)" class="btn secondary-btn">Decline</button>
-                </div>
+              <!-- Show when user is blocked -->
+              <div v-if="isBlocked(profile)">
+                <button @click="unblockUser(profile.id)" class="btn unblock-btn">
+                  Unblock User
+                </button>
               </div>
-              <div v-else-if="profile.is_friend">
-                <button @click="removeFriend(profile.id)" class="btn secondary-btn">Remove Friend</button>
-              </div>
+              <!-- Show for non-blocked users -->
               <div v-else>
-                <button @click="sendFriendRequest(profile.id)" class="btn primary-btn">Add Friend</button>
+                <!-- Show friend status buttons -->
+                <div v-if="isFriend(profile)" class="friend-management">
+                  <button @click="removeFriend(profile.id)" class="btn secondary-btn">
+                    Remove Friend
+                  </button>
+                </div>
+                <!-- Show pending request status -->
+                <div v-else-if="profile.friend_request_status === 'pending'">
+                  <p v-if="profile.requested_by_current_user" class="status-text">
+                    Request Pending
+                  </p>
+                  <div v-else>
+                    <button @click="acceptFriendRequest(profile.id)" class="btn accept-btn">
+                      Accept
+                    </button>
+                    <button @click="declineFriendRequest(profile.id)" class="btn decline-btn">
+                      Decline
+                    </button>
+                  </div>
+                </div>
+                <!-- Show add friend option -->
+                <div v-else class="friend-management">
+                  <button @click="sendFriendRequest(profile.id)" class="btn add-btn">
+                    Add Friend
+                  </button>
+                  <button @click="blockUser(profile.id)" class="btn block-btn">
+                    Block
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Friends Section with Chat -->
+      <!-- Incoming Friend Requests -->
       <div class="profile-section">
-        <h3>Friends</h3>
-        <div v-if="profile.friends && profile.friends.length > 0">
-          <div v-for="friend in profile.friends" :key="friend.id" class="profile-item">
-            <img :src="friend.avatar" :alt="friend.display_name" class="profile-avatar">
-            <span class="profile-name">{{ friend.display_name }}</span>
-            <span :class="['status', friend.is_online ? 'online' : 'offline']">
-              {{ friend.is_online ? 'Online' : 'Offline' }}
-            </span>
-            <div class="friend-actions">
-              <button @click="startChat(friend)" class="btn primary-btn">Chat</button>
-              <button @click="removeFriend(friend.id)" class="btn secondary-btn">Remove</button>
-            </div>
+        <div v-if="incomingFriendRequests.length">Incoming Friend Requests</div>
+        <div v-for="request in incomingFriendRequests" 
+            :key="request.id" 
+            class="profile-item">
+          <img :src="request.from_user.avatar" :alt="request.from_user.display_name" class="profile-avatar">
+          <span class="profile-name">{{ request.from_user.display_name }}</span>
+          <div class="action-buttons">
+            <button @click="acceptFriendRequest(request)" 
+                    class="btn accept-btn">
+              Accept
+            </button>
+            <button @click="declineFriendRequest(request)" 
+                    class="btn decline-btn">
+              Decline
+            </button>
           </div>
-        </div>
-        <p v-else>No friends yet</p>
-      </div>
-
-      <!-- Chat Section -->
-      <div v-if="showChat" class="chat-container">
-        <div class="chat-header">
-          <h4>Chat with {{ activeChat }}</h4>
-          <button @click="closeChat" class="btn secondary-btn">Close</button>
-        </div>
-        <div class="chat-messages">
-          <div v-for="message in messages" :key="message.timestamp" class="chat-message">
-            <span class="chat-username">{{ message.sender }}:</span>
-            <span class="chat-text">{{ message.message }}</span>
-            <span class="chat-time">{{ new Date(message.timestamp).toLocaleTimeString() }}</span>
-          </div>
-        </div>
-        <div class="chat-input">
-          <input 
-            v-model="newMessage" 
-            @keyup.enter="sendMessage" 
-            placeholder="Type your message..."
-            class="input-field"
-          />
-          <button @click="sendMessage" class="btn primary-btn">Send</button>
         </div>
       </div>
     </div>
@@ -122,6 +137,11 @@
     <!-- Loading and Error States -->
     <div v-if="loading">Loading...</div>
     <div v-if="error" class="error">{{ error }}</div>
+
+    <!-- Logout Button -->
+    <nav>
+      <button @click="logout" class="btn secondary-btn">Logout</button>
+    </nav>
   </div>
 </template>
 
@@ -145,21 +165,25 @@ export default {
       isUpdateDisabled: true,
       
       // Avatar Upload
-      defaultAvatarUrl: 'http://localhost:8000/media/default.png',
-      isDefaultAvatar: true,
+      defaultAvatarUrl: 'https://localhost:8000/media/default.png',
 
       // Profile Search
       searchQuery: '',
       searchResults: [],
-      searchError: null,
       isSearching: false,
+      searchError: null,
       searchTimeout: null,
+      currentUserId: null,
 
-      // Chat
-      showChat: false,
-      activeChat: null,
-      messages: [],
-      newMessage: ''
+      //Web Socket
+      wsConnected: false,
+      notificationSocket: null,
+
+      // Friend Requests
+      incomingFriendRequests: JSON.parse(localStorage.getItem('incomingRequests') || '[]'),
+
+      // Status Message
+      statusMessage: null
     };
   },
 
@@ -167,13 +191,20 @@ export default {
     ...mapGetters(['getToken', 'isAuthenticated']),
 
     isDefaultAvatar() {
-      return !this.profile || this.profile.avatar === this.defaultAvatarUrl;
+      if (!this.profile || !this.profile.avatar) return true;
+      return this.profile.avatar.includes('default.png');
     }
   },
 
   watch: {
     displayName() {
       this.checkDisplayName();
+    },
+    messages: {
+      handler() {
+        this.scrollToBottom(); // Add scroll when messages update
+      },
+      deep: true
     }
   },
 
@@ -189,11 +220,38 @@ export default {
     
     this.isInitialized = true;
     await this.fetchProfile();
-    this.connectWebSocket();
+    this.currentUserId = this.profile.id;
+    this.fetchIncomingRequests();
+  },
 
+  mounted() {
+    this.initNotificationSocket();
   },
 
   methods: {
+
+    showStatus(message, variables = {}, type = 'success') {
+      // Validate message type
+      const validTypes = ['success', 'warning', 'error'];
+      if (!validTypes.includes(type)) {
+        type = 'success'; // Default fallback
+      }
+
+      // Interpolate variables into message
+      let text = message;
+      Object.entries(variables).forEach(([key, value]) => {
+        text = text.replace(`{${key}}`, value);
+      });
+
+      // Set status message
+      this.statusMessage = { text, type };
+
+      // Clear after timeout
+      setTimeout(() => {
+        this.statusMessage = null;
+      }, 3000);
+    },
+
     async fetchProfile() {
       try {
         const response = await fetch('http://localhost:8000/api/profile/', {
@@ -317,10 +375,19 @@ export default {
       }
     },
 
+    isFriend(profile) {
+      return this.profile?.friends?.some(friend => friend.id === profile.id)
+    },
+
+    isBlocked(profile) {
+      return profile.isBlocked; // Check the isBlocked flag from API response
+    },
+
     async searchProfiles() {
       try {
         if (!this.searchQuery.trim()) {
           this.searchResults = [];
+          this.showStatus('Please enter a search term', {}, 'warning');
           return;
         }
 
@@ -328,7 +395,7 @@ export default {
         this.searchError = null;
 
         const response = await fetch(
-          `http://localhost:8000/api/profile/search/?q=${encodeURIComponent(this.searchQuery)}`,
+          `http://localhost:8000/api/profile/search/?q=${encodeURIComponent(this.searchQuery.trim())}`,
           {
             headers: {
               'Authorization': `Token ${this.getToken}`,
@@ -342,8 +409,15 @@ export default {
         }
 
         const data = await response.json();
+        console.log('Search results:', data); // Debug log
         this.searchResults = data;
 
+        if (data.length === 0) {
+          this.showStatus('No users found for "{query}"', { query: this.searchQuery }, 'warning');
+        } else {
+          this.showStatus('Found {count} users', { count: data.length }, 'success');
+        }
+      
       } catch (error) {
         console.error('Search error:', error);
         this.searchError = error.message;
@@ -353,8 +427,61 @@ export default {
       }
     },
 
+    async blockUser(profileId) {
+      try {
+        const profile = this.searchResults.find(p => p.id === profileId);
+        const response = await fetch(`/api/profile/${profileId}/block/`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Token ${this.getToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) throw new Error('Failed to block user');
+        
+        this.searchResults = this.searchResults.map(profile => {
+          if (profile.id === profileId) {
+            return { ...profile, isBlocked: true };
+          }
+          return profile;
+        });
+
+        this.showStatus('User {name} has been blocked', { name: profile.display_name }, 'warning');
+      } catch (error) {
+        this.showStatus(error.message, 'error');
+      }
+    },
+
+    async unblockUser(profileId) {
+      try {
+        const profile = this.searchResults.find(p => p.id === profileId);
+        const response = await fetch(`/api/profile/${profileId}/block/`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Token ${this.getToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) throw new Error('Failed to unblock user');
+
+        this.searchResults = this.searchResults.map(profile => {
+          if (profile.id === profileId) {
+            return { ...profile, isBlocked: false };
+          }
+          return profile;
+        });
+
+        this.showStatus('User {name} has been unblocked', { name: profile.display_name }, 'success');
+      } catch (error) {
+        this.showStatus(error.message, 'error');
+      }
+    },
+
     async sendFriendRequest(friendId) {
       try {
+        const friend = this.searchResults.find(p => p.id === friendId);
         const response = await fetch('/api/profile/add_friend/', {
           method: 'POST',
           headers: {
@@ -364,7 +491,7 @@ export default {
           body: JSON.stringify({ friend_profile_id: friendId }),
         });
         if (response.ok) {
-          alert('Friend request sent successfully');
+          this.showStatus('Friend request sent to {name}', { name: friend.display_name }, 'success');
           // Update the search results to reflect the pending status
           this.searchResults = this.searchResults.map(profile => {
             if (profile.id === friendId) {
@@ -381,54 +508,80 @@ export default {
       }
     },
 
-    async acceptFriendRequest(fromUserId) {
+    async acceptFriendRequest(request) {
       try {
-        const response = await fetch('/api/profile/accept_friend_request/', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Token ${this.getToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ from_user_id: fromUserId }),
-        });
-        if (response.ok) {
-          alert('Friend request accepted successfully');
-          // Remove the request from the list
-          this.incomingFriendRequests = this.incomingFriendRequests.filter(req => req.from_user_id !== fromUserId);
-          // Update the friends list
-          this.fetchProfile();
-        } else {
-          console.error('Failed to accept friend request');
-        }
+        const userId = this.extractUserId(request);
+        await this.sendAcceptRequest(userId);
+        this.updateLocalRequests(userId);
+        this.showStatus('Friend request accepted', {}, 'success');
+        await this.fetchProfile();
       } catch (error) {
-        console.error('Error accepting friend request:', error);
+        console.error('Accept error:', error);
+        this.showStatus('Error: {msg}', { msg: error.message }, 'error');
       }
     },
 
-    async declineFriendRequest(fromUserId) {
-      try {
-        const response = await fetch('/api/profile/decline_friend_request/', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Token ${this.getToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ friend_profile_id: fromUserId }),
-        });
-        if (response.ok) {
-          alert('Friend request declined successfully');
-          // Remove the request from the list
-          this.incomingFriendRequests = this.incomingFriendRequests.filter(req => req.from_user_id !== fromUserId);
-        } else {
-          console.error('Failed to decline friend request');
-        }
-      } catch (error) {
-        console.error('Error declining friend request:', error);
+    async sendAcceptRequest(userId) {
+      const response = await fetch('/api/profile/friend-requests/accept/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${this.getToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ from_user_id: userId })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to accept friend request');
       }
+    },
+
+    async declineFriendRequest(request) {
+      try {
+        const userId = this.extractUserId(request);
+        await this.sendDeclineRequest(userId);
+        this.updateLocalRequests(userId);
+        this.showStatus('Friend request declined', {}, 'success');
+      } catch (error) {
+        console.error('Decline error:', error);
+        this.showStatus('Error: {msg}', { msg: error.message }, 'error');
+      }
+    },
+
+    // Helper methods
+    extractUserId(request) {
+      const userId = request.from_user_id || request.from_user?.id;
+      if (!userId) throw new Error('Invalid request data');
+      return userId;
+    },
+
+    async sendDeclineRequest(userId) {
+      const response = await fetch('/api/profile/friend-requests/decline/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${this.getToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ from_user_id: userId })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to decline friend request');
+      }
+    },
+
+    updateLocalRequests(userId) {
+      this.incomingFriendRequests = this.incomingFriendRequests.filter(
+        req => (req.from_user_id || req.from_user?.id) !== userId
+      );
+      localStorage.setItem('incomingRequests', JSON.stringify(this.incomingFriendRequests));
     },
 
     async removeFriend(friendId) {
       try {
+        const friend = this.profile.friends.find(f => f.id === friendId);
         const response = await fetch('/api/profile/remove_friend/', {
           method: 'POST',
           headers: {
@@ -437,15 +590,11 @@ export default {
           },
           body: JSON.stringify({ friend_profile_id: friendId }),
         });
+          
         if (response.ok) {
-          alert('Friend removed successfully');
-          // Refresh friends list
-          this.fetchProfile();
-          // Send WebSocket notification
-          this.socket.send(JSON.stringify({
-            type: 'friend_removed',
-            user_id: this.currentUserId,
-          }));
+          this.showStatus('Friend {name} removed successfully', { name: friend.display_name }, 'success');
+          
+          await this.fetchProfile(); // Refresh sender's profile
         } else {
           console.error('Failed to remove friend');
         }
@@ -454,81 +603,202 @@ export default {
       }
     },
 
-    async fetchIncomingFriendRequests() {
+    // Helper method to check friend request status
+    getFriendRequestStatus(profile) {
+      return profile.friend_request_status;
+    },
+
+
+    async fetchIncomingRequests() {
       try {
-        const response = await fetch('/api/profile/incoming_friend_requests/', {
+        console.log('Starting fetch of incoming requests');
+        
+        const response = await fetch('/api/profile/friend-requests/', {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-          },
+            'Authorization': `Token ${this.getToken}`,
+            'Content-Type': 'application/json'
+          }
         });
-        if (response.ok) {
-          const data = await response.json();
-          this.incomingFriendRequests = data.requests || [];
-        } else {
-          console.error('Failed to fetch incoming friend requests');
-          this.incomingFriendRequests = [];
+
+        const data = await response.json();
+        console.log('Raw API response:', data);
+
+        // Validate data before processing
+        if (!Array.isArray(data)) {
+          throw new Error('Invalid response format');
         }
+
+        const baseUrl = 'http://localhost:8000';
+        
+        // Map with validation
+        const validRequests = data
+          .filter(request => {
+            const isValid = request && request.from_user;
+            if (!isValid) console.warn('Invalid request:', request);
+            return isValid;
+          })
+          .map(request => ({
+            id: request.id,
+            from_user: {
+              id: request.from_user.id,
+              display_name: request.from_user.display_name,
+              avatar: this.buildAvatarUrl(request.from_user.avatar, baseUrl),
+              is_online: !!request.from_user.is_online
+            },
+            status: request.status
+          }));
+
+        console.log('Processed requests:', validRequests);
+        this.incomingFriendRequests = validRequests;
+
       } catch (error) {
-        console.error('Error fetching incoming friend requests:', error);
-        this.incomingFriendRequests = [];
+        console.error('Fetch error:', error);
+        this.incomingFriendRequests = []; // Reset on error
       }
     },
 
-    async startChat(friend) {
-      // Initialize chat
-    },
-    async sendMessage() {
-      // Handle message sending
-    },
-    closeChat() {
-      // Close chat window
-    },
-    async logout() {
-      // Handle logout
+    // Helper method for avatar URL
+    buildAvatarUrl(avatarPath, baseUrl) {
+        // If no avatar path provided, return default avatar
+        if (!avatarPath) return this.defaultAvatarUrl;
+        
+        // If it's already a full URL, return it
+        if (avatarPath.startsWith('http')) return avatarPath;
+        
+        // If it's a path starting with /media
+        if (avatarPath.startsWith('/media')) {
+            return `${baseUrl}${avatarPath}`;
+        }
+        
+        // For relative paths in the avatars directory
+        return `${baseUrl}/media/avatars/${avatarPath}`;
     },
 
-    // NEED TO CHANGE WEB SOCKETS TO WORK WITH AUTHENTICATION TOKENS 
+    handleAvatarError(e) {
+        console.warn('Avatar failed to load:', e.target.src);
+        if (e.target.src !== this.defaultAvatarUrl) {
+            e.target.src = this.defaultAvatarUrl;
+        } else {
+            // If even the default avatar fails, use an inline SVG or emergency fallback
+            e.target.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgM2MyLjY3IDAgNC42NyAyIDQuNjcgNC42N2MwIDIuNjctMiA0LjY3LTQuNjcgNC42N3MtNC42Ny0yLTQuNjctNC42N0M3LjMzIDcgOS4zMyA1IDEyIDV6bTAgMTIuNTVjLTMuNDcgMC02LjMzLTIuMTMtNy41LTUuMTNDNi40NSAxMC42OCA5LjUzIDEwIDEyIDEwczUuNTUuNjggNi41IDIuNDJjLTEuMTcgMy0zLjAzIDUuMTMtNi41IDUuMTN6Ii8+PC9zdmc+';
+        }
+    },
+
+    formatDate(timestamp) {
+      if (!timestamp) return '';
+      try {
+        return new Date(timestamp).toLocaleTimeString();
+      } catch (e) {
+        console.error('Date parsing error:', e);
+        return '';
+      }
+    },
+
+    async logout() {
+      try {
+        // Send offline status
+        if (this.notificationSocket && this.notificationSocket.readyState === WebSocket.OPEN) {
+          this.notificationSocket.send(JSON.stringify({
+            type: 'friend_status',
+            status: 'offline'
+          }));
+          
+          await new Promise(resolve => setTimeout(resolve, 100));
+          this.notificationSocket.close();
+        }
+
+        localStorage.removeItem('incomingRequests');
+        
+        // Clear store and redirect
+        await this.$store.dispatch('logoutAction');
+        this.$router.push('/login');
+      } catch (error) {
+        console.error('Logout error:', error);
+      }
+    },
 
     // WebSocket methods
-    // connectWebSocket() {
-    //   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    //   this.socket = new WebSocket(`${protocol}//${window.location.host}/ws/profile/notifications/`);
-    //   this.socket.onmessage = (event) => {
-    //     const data = JSON.parse(event.data);
-    //     this.notifications.push(data);
+    initNotificationSocket() {
+      //Get token from store
+      const token = this.getToken;
+      const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${wsScheme}://${window.location.host}/ws/profile/notifications/?token=${token}`;
+      
+      this.notificationSocket = new WebSocket(wsUrl);
+      this.notificationSocket.onopen = () => {
+        this.wsConnected = true;
+      };
+      this.notificationSocket.onmessage = (e) => {
+        console.log('WebSocket message received:', e.data);  // Debug logging
+        const data = JSON.parse(e.data);
+        // Handle incoming messages
+        switch (data.type) {
+          case 'friend_request':
+            this.incomingFriendRequests.push({
+                id: Date.now(), // Generate temporary ID
+                from_user: {
+                    id: data.from_user_id,
+                    display_name: data.from_user_name,
+                    avatar: this.buildAvatarUrl(data.from_user_avatar, 'http://localhost:8000'),
+                    is_online: true // Assume online since they just sent request
+                }
+            });
+            this.showStatus(`New friend request from ${data.from_user_name}`, {}, 'success');
+            break;
 
-    //     if (data.type === 'friend_request') {
-    //       // Add the new friend request to the list
-    //       this.incomingFriendRequests.push({
-    //         from_user_id: data.from_user_id,
-    //         from_user_name: data.from_user_name,
-    //         avatar: data.from_user_avatar,
-    //       });
-    //     } else if (data.type === 'friend_status') {
-    //       // Update friend's online status
-    //       const friendId = data.user_id;
-    //       const status = data.status;
-    //       const friend = this.friends.find(f => f.id === friendId);
-    //       if (friend) {
-    //         friend.is_online = (status === 'online');
-    //       } else {
-    //         friend.is_online = (status === 'offline');
-    //       }
-    //     } else if (data.type === 'friend_request_accepted') {
-    //       // Update the friends list
-    //       this.fetchProfile();
-    //     } else if (data.type === 'friend_request_declined') {
-    //       // Handle friend request declined
-    //       alert(`Your friend request to ${data.user_name} was declined.`);
-    //     } else if (data.type === 'friend_removed') {
-    //       // Handle friend removed
-    //       this.friends = this.friends.filter(friend => friend.id !== data.user_id);
-    //     }
-    //   };
-    //   this.socket.onclose = () => {
-    //     console.log('WebSocket connection closed');
-    //   };
-    // }
+            case 'friend_status':
+              const friendId = data.user_id;
+              const status = data.status;
+              // First try to find friend in the profile.friends array
+              const friend = this.profile.friends.find(f => 
+                  f.user_id === friendId || // Check user_id
+                  f.id === friendId || // Check profile id
+                  (f.user && f.user.id === friendId) // Check nested user object
+              );
+              
+              if (friend) {
+                  friend.is_online = (status === 'online');
+                  console.log(`Updated status for friend ${friend.display_name} to ${status}`);
+              } else {
+                  console.log('Friend status update failed:', {
+                      receivedId: friendId,
+                      status: status,
+                      friendsList: this.profile.friends
+                  });
+              }
+              break;
+
+          case 'friend_request_accepted':
+            this.fetchProfile();
+            break;
+
+          case 'friend_request_declined':
+            this.fetchProfile();
+            break;
+
+          case 'friend_removed':
+            this.fetchProfile(); // Refresh receiver's profile
+            break;
+
+          default:
+            console.warn('Unhandled WebSocket message type:', data.type);
+            break;
+        }
+      };
+      this.notificationSocket.onclose = () => {
+        this.wsConnected = false;
+      };
+    },
+
+    // Cleanup on component destruction
+    beforeDestroy() {
+      if (this.notificationSocket) {
+        this.notificationSocket.close();
+      }
+      if (this.chatSocket) {
+        this.chatSocket.close();
+      }
+    }
   }
 };
 </script>
@@ -565,7 +835,7 @@ export default {
   width: 150px;
   height: 150px;
   border-radius: 50%;
-  border: 2px solid #4caf50;
+  border: 2px solid #000000;
   margin-bottom: 10px;
 }
 
@@ -585,38 +855,73 @@ export default {
   margin-top: 10px;
 }
 
-.input-field,
-.file-input {
-  padding: 10px;
-  border: 1px solid #4caf50;
-  border-radius: 5px;
-  font-size: 14px;
-  width: 100%;
-}
-
 .error-message {
   color: red;
   font-size: 12px;
   margin-top: 5px;
 }
 
+.friend-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.friend-management {
+  display: flex;
+  gap: 8px;
+}
+
 .btn {
-  padding: 10px 20px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
   border: none;
-  border-radius: 5px;
-  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background-color 0.2s;
 }
 
 .primary-btn {
-  background-color: #4caf50;
+  background: #333333;
   color: white;
-  transition: transform 0.3s ease; /* Add transition for smooth animation */
+}
+
+.primary-btn:hover {
+  background: #03a670;
 }
 
 .primary-btn:disabled {
   background-color: #5b5b5b;
   cursor: not-allowed;
+}
+
+.secondary-btn {
+  background: #333333;
+  color: #ffffff;
+}
+
+.secondary-btn:hover {
+  background: #a60303;
+}
+
+.warning-btn {
+  background: #a60303;
+  color: white;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.accept-btn {
+  background: #03a670;
+  color: white;
+}
+
+.decline-btn {
+  background: #a60303;
+  color: white;
 }
 
 @keyframes pulse {
@@ -632,8 +937,13 @@ export default {
   animation: pulse 1s infinite; /* Apply the pulse animation */
 }
 
-.secondary-btn {
-  background-color: #f44336;
+.block-btn {
+  background: #a60303;
+  color: white;
+}
+
+.unblock-btn {
+  background: #666;
   color: white;
 }
 
@@ -643,29 +953,34 @@ export default {
 
 .search-results {
   list-style: none;
-  padding: 0;
+  padding-top: 1%;
+  padding-bottom: 1%;
   margin: 0;
 }
 
 .profile-item {
   display: flex;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 1%;
 }
 
 .profile-avatar {
   width: 50px;
   height: 50px;
   border-radius: 50%;
-  margin-right: 10px;
+  margin-right: 5%;
 }
 
 .profile-name {
   font-size: 16px;
   flex-grow: 1;
+  padding-left: 5%;
+  padding-right: 5%;
 }
 
 .status {
+  padding-left: 5%;
+  padding-right: 5%;
   margin-right: 10px;
 }
 
@@ -685,29 +1000,45 @@ nav .btn {
   margin: 1em 0;
 }
 
-.chat-container {
-  margin-top: 20px;
-}
-
-.chat-box {
-  border: 1px solid #ccc;
-  padding: 10px;
-  height: 200px;
-  overflow-y: scroll;
-}
-
-.chat-message {
-  margin-bottom: 10px;
-}
-
-.chat-username {
-  font-weight: bold;
+.status-text {
+  color: #666;
+  font-style: italic;
 }
 
 input {
   width: 100%;
   padding: 10px;
   box-sizing: border-box;
+}
+
+.status-message {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 12px 24px;
+  border-radius: 4px;
+  z-index: 1000;
+  animation: fadeIn 0.3s ease;
+}
+
+.status-message.success {
+  background-color: #4caf50;
+  color: white;
+}
+
+.status-message.warning {
+  background-color: #ff9800;
+  color: white;
+}
+
+.status-message.error {
+  background-color: #f44336;
+  color: white;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 </style>

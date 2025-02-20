@@ -18,7 +18,13 @@ Including another URLconf
 from django.urls import path, re_path
 from django.conf import settings
 from django.conf.urls.static import static
-from .views import RegisterView, LoginView, ProfileView, LogoutView, SearchProfilesView, AddFriendView, RemoveFriendView, AcceptFriendRequestView, DeclineFriendRequestView, IncomingFriendRequestsView, ChatView
+from .views import (
+    RegisterView, LoginView, ProfileView, LogoutView, SearchProfilesView,
+    AddFriendView, RemoveFriendView, AcceptFriendRequestView,
+    DeclineFriendRequestView, IncomingFriendRequestsView,
+    BlockUserView
+)
+
 
 urlpatterns = [
     # Auth endpoints
@@ -29,18 +35,16 @@ urlpatterns = [
     # Profile endpoints
     path('api/profile/', ProfileView.as_view(), name='profile'),
     path('api/profile/search/', SearchProfilesView.as_view(), name='search_profiles'),
-    # path('api/profile/display-name/check/', check_display_name, name='check_display_name'),
     
     # Friend management endpoints
     path('api/profile/add_friend/', AddFriendView.as_view(), name='add_friend'),
-    path('api/profile/accept_friend_request/', AcceptFriendRequestView.as_view(), name='accept_friend_request'),
-    path('api/profile/decline_friend_request/', DeclineFriendRequestView.as_view(), name='decline_friend_request'),
     path('api/profile/remove_friend/', RemoveFriendView.as_view(), name='remove_friend'),
-    path('api/profile/incoming_friend_requests/', IncomingFriendRequestsView.as_view(), name='incoming_friend_requests'),
-    
-    # Chat endpoints
-    path('api/profile/chat/<int:id>/', ChatView.as_view(), name='chat_view'),
-]
+    path('api/profile/friend-requests/', IncomingFriendRequestsView.as_view(), name='friend_requests'),
+    path('api/profile/friend-requests/accept/', AcceptFriendRequestView.as_view(), name='accept_friend_request'),
+    path('api/profile/friend-requests/decline/', DeclineFriendRequestView.as_view(), name='decline_friend_request'),
 
+    # Block management endpoints
+    path('api/profile/<int:user_id>/block/', BlockUserView.as_view(), name='block-user'),
+]
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
